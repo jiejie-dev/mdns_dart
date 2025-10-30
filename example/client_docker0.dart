@@ -20,6 +20,9 @@ void main() async {
     '_esp32auth._udp',
     timeout: Duration(seconds: 3),
     networkInterface: targetInterface,
+    // Request unicast responses.
+    // On Docker this is often necessary mostly for host-to-container communication.
+    wantUnicastResponse: true,
   );
 
   if (results.isEmpty) {
