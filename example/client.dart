@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:mdns_dart/mdns_dart.dart';
 
 /// Simple mDNS client example
@@ -8,7 +9,7 @@ void main() async {
     '_puupee._tcp',
     timeout: Duration(seconds: 3),
     reuseAddress: true,
-    reusePort: true,
+    reusePort: !Platform.isWindows, // Windows doesn't support SO_REUSEPORT
   );
 
   if (results.isEmpty) {

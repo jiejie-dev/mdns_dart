@@ -730,23 +730,24 @@ class _Client {
     bool ipv4Error = true;
     bool ipv6Error = true;
 
-    if (_ipv4UnicastConn != null) {
+    // Use multicast sockets to send multicast queries (required for cross-platform compatibility)
+    if (_ipv4MulticastConn != null) {
       try {
-        _ipv4UnicastConn!.send(data, InternetAddress(ipv4mDNS), mDNSPort);
-        _log('Sent query via IPv4 unicast to $ipv4mDNS:$mDNSPort');
+        _ipv4MulticastConn!.send(data, InternetAddress(ipv4mDNS), mDNSPort);
+        _log('Sent query via IPv4 multicast to $ipv4mDNS:$mDNSPort');
         ipv4Error = false;
       } catch (e) {
-        _log('Failed to send query via IPv4 unicast: $e');
+        _log('Failed to send query via IPv4 multicast: $e');
       }
     }
 
-    if (_ipv6UnicastConn != null) {
+    if (_ipv6MulticastConn != null) {
       try {
-        _ipv6UnicastConn!.send(data, InternetAddress(ipv6mDNS), mDNSPort);
-        _log('Sent query via IPv6 unicast to $ipv6mDNS:$mDNSPort');
+        _ipv6MulticastConn!.send(data, InternetAddress(ipv6mDNS), mDNSPort);
+        _log('Sent query via IPv6 multicast to $ipv6mDNS:$mDNSPort');
         ipv6Error = false;
       } catch (e) {
-        _log('Failed to send query via IPv6 unicast: $e');
+        _log('Failed to send query via IPv6 multicast: $e');
       }
     }
 
