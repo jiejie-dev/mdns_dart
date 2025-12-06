@@ -1,12 +1,45 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:args/args.dart';
 import 'package:mdns_dart/mdns_dart.dart';
 
 /// Simple mDNS server example
-void main() async {
-  // Check for debug flag from environment or args
-  final debug = Platform.environment['MDNS_DEBUG'] == '1' ||
-      Platform.executableArguments.contains('--debug');
+void main(List<String> arguments) async {
+  final parser = ArgParser()
+    ..addFlag('debug',
+        abbr: 'd', help: 'Enable debug logging', negatable: false)
+    ..addFlag('help',
+        abbr: 'h', help: 'Show this help message', negatable: false)
+    ..addOption('service',
+        abbr: 's', help: 'Service type', defaultsTo: '_puupee._tcp')
+    ..addOption('port', abbr: 'p', help: 'Service port', defaultsTo: '12056')
+    ..addOption('name',
+        abbr: 'n', help: 'Instance name', defaultsTo: 'Dart Test Server');
+
+  late ArgResults args;
+  try {
+    args = parser.parse(arguments);
+  } catch (e) {
+    print('Error: $e');
+    print('Usage: dart run example/server.dart [options]');
+    print(parser.usage);
+    exit(1);
+  }
+
+  if (args.flag('help')) {
+    print('mDNS Server Example');
+    print('');
+    print('Usage: dart run example/server.dart [options]');
+    print('');
+    print('Options:');
+    print(parser.usage);
+    exit(0);
+  }
+
+  final debug = args.flag('debug') || Platform.environment['MDNS_DEBUG'] == '1';
+  final serviceType = args.option('service')!;
+  final port = int.tryParse(args.option('port')!) ?? 12056;
+  final instanceName = '${args.option('name')} ${Platform.localHostname}';
 
   print('Starting mDNS server...');
   print('Platform: ${Platform.operatingSystem}');
@@ -32,15 +65,16 @@ void main() async {
 
   // Create service with all local IPs
   final service = await MDNSService.create(
-    instance: 'Dart Test Server ${Platform.localHostname}',
-    service: '_puupee._tcp',
-    port: 12056,
+    instance: instanceName,
+    service: serviceType,
+    port: port,
     ips: localIPs,
     txt: ['path=/api'],
   );
 
   print('');
   print('Service: ${service.instance}');
+  print('Type: $serviceType');
   print('Addresses: ${localIPs.map((ip) => ip.address).join(', ')}');
   print('Port: ${service.port}');
   print('');
@@ -61,7 +95,7 @@ void main() async {
     print('Server started - advertising service!');
     print('');
     print('Tips:');
-    print('  - Run with MDNS_DEBUG=1 for detailed logs');
+    print('  - Run with --debug or MDNS_DEBUG=1 for detailed logs');
     print('  - Ensure firewall allows UDP port 5353');
     print('  - Press Ctrl+C to stop');
 
