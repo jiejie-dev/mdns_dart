@@ -5,8 +5,10 @@ void main() async {
   print('Discovering HTTP services...');
 
   final results = await MDNSClient.discover(
-    '_http._tcp',
+    '_puupee._tcp',
     timeout: Duration(seconds: 3),
+    reuseAddress: true,
+    reusePort: true,
   );
 
   if (results.isEmpty) {

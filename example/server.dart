@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:mdns_dart/mdns_dart.dart';
 
@@ -27,8 +28,8 @@ void main() async {
   // Create service
   final service = await MDNSService.create(
     instance: 'Dart Test Server',
-    service: '_testservice._tcp',
-    port: 9090,
+    service: '_puupee._tcp',
+    port: 12056,
     ips: [localIP],
     txt: ['path=/api'],
   );
@@ -42,7 +43,8 @@ void main() async {
     await server.start();
     print('Server started - advertising service!');
 
-    await Future.delayed(Duration(seconds: 30));
+    Completer<void> completer = Completer();
+    await completer.future; // 程序将一直等待，永不退出
   } finally {
     await server.stop();
     print('Server stopped');
