@@ -74,6 +74,9 @@ class MDNSServer {
   RawDatagramSocket? _ipv4Socket;
   RawDatagramSocket? _ipv6Socket;
 
+  /// Network interfaces to send multicast responses on
+  List<NetworkInterface> _multicastInterfaces = [];
+
   bool _isRunning = false;
   final List<StreamSubscription> _subscriptions = [];
 
@@ -92,7 +95,13 @@ class MDNSServer {
       List<NetworkInterface> interfaces = [];
       if (_config.joinMulticastOnAllInterfaces) {
         interfaces = await NetworkInterface.list();
-        _log('Found ${interfaces.length} network interfaces');
+        // Filter to interfaces with non-loopback addresses and save for sending
+        _multicastInterfaces = interfaces
+            .where((i) => i.addresses.any((a) => !a.isLoopback))
+            .toList();
+        _log(
+          'Found ${interfaces.length} network interfaces, ${_multicastInterfaces.length} usable for multicast',
+        );
       }
 
       // Create IPv4 multicast socket
@@ -466,12 +475,46 @@ class MDNSServer {
           'Sent unicast response to ${targetAddress.address}:$targetPort (${data.length} bytes)',
         );
       } else {
-        // Send multicast response
-        final multicastAddr = socket.address.type == InternetAddressType.IPv4
+        // Send multicast response on all interfaces
+        final isIPv4 = socket.address.type == InternetAddressType.IPv4;
+        final multicastAddr = isIPv4
             ? InternetAddress(_ipv4MulticastAddr)
             : InternetAddress(_ipv6MulticastAddr);
-        socket.send(data, multicastAddr, _mdnsPort);
-        _log('Sent multicast response (${data.length} bytes)');
+        final addrType =
+            isIPv4 ? InternetAddressType.IPv4 : InternetAddressType.IPv6;
+
+        if (_config.joinMulticastOnAllInterfaces &&
+            _multicastInterfaces.isNotEmpty) {
+          // Send on all interfaces
+          int sentCount = 0;
+          for (final iface in _multicastInterfaces) {
+            final hasMatchingAddr = iface.addresses.any(
+              (a) => a.type == addrType && !a.isLoopback,
+            );
+            if (!hasMatchingAddr) continue;
+
+            try {
+              socket.setMulticastInterface(iface);
+              socket.send(data, multicastAddr, _mdnsPort);
+              sentCount++;
+              _log(
+                'Sent multicast response via ${iface.name} (${data.length} bytes)',
+              );
+            } catch (e) {
+              _log('Failed to send multicast response via ${iface.name}: $e');
+            }
+          }
+
+          if (sentCount == 0) {
+            // Fallback: send on default interface
+            socket.send(data, multicastAddr, _mdnsPort);
+            _log('Sent multicast response on default interface (${data.length} bytes)');
+          }
+        } else {
+          // Send on default interface only
+          socket.send(data, multicastAddr, _mdnsPort);
+          _log('Sent multicast response (${data.length} bytes)');
+        }
       }
     } catch (e) {
       _log('Failed to send response: $e');
