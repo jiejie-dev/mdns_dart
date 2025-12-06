@@ -27,7 +27,7 @@ void main() async {
 
   // Create service
   final service = await MDNSService.create(
-    instance: 'Dart Test Server Macos',
+    instance: 'Dart Test Server ${Platform.localHostname}',
     service: '_puupee._tcp',
     port: 12056,
     ips: [localIP],
