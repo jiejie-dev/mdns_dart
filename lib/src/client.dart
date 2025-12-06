@@ -279,6 +279,9 @@ class _Client {
   RawDatagramSocket? _ipv4MulticastConn;
   RawDatagramSocket? _ipv6MulticastConn;
 
+  /// Network interfaces to send multicast queries on
+  List<NetworkInterface> _multicastInterfaces = [];
+
   bool _closed = false;
   final Completer<void> _closedCompleter = Completer<void>();
 
@@ -374,7 +377,11 @@ class _Client {
     List<NetworkInterface> interfaces = [];
     if (_joinMulticastOnAllInterfaces) {
       interfaces = await NetworkInterface.list();
-      _log('Found ${interfaces.length} network interfaces');
+      // Filter to interfaces with non-loopback addresses
+      _multicastInterfaces = interfaces
+          .where((i) => i.addresses.any((a) => !a.isLoopback))
+          .toList();
+      _log('Found ${interfaces.length} network interfaces, ${_multicastInterfaces.length} usable for multicast');
     }
 
     // Create multicast connections
@@ -819,49 +826,92 @@ class _Client {
     });
   }
 
-  /// Sends a DNS query to multicast addresses
+  /// Sends a DNS query to multicast addresses on all interfaces
   Future<void> _sendQuery(DNSMessage query) async {
     final data = query.pack();
     _log('Sending ${data.length} byte DNS query packet');
 
-    bool ipv4Error = true;
-    bool ipv6Error = true;
+    int ipv4Success = 0;
+    int ipv6Success = 0;
 
-    // Use multicast sockets to send multicast queries (required for cross-platform compatibility)
-    if (_ipv4MulticastConn != null) {
-      try {
-        _ipv4MulticastConn!.send(data, InternetAddress(ipv4mDNS), mDNSPort);
-        _log('Sent query via IPv4 multicast to $ipv4mDNS:$mDNSPort');
-        ipv4Error = false;
-      } catch (e) {
-        _log('Failed to send query via IPv4 multicast: $e');
+    // If we have multiple interfaces, send on each one
+    if (_joinMulticastOnAllInterfaces && _multicastInterfaces.isNotEmpty) {
+      _log('Sending query on ${_multicastInterfaces.length} network interfaces');
+
+      for (final iface in _multicastInterfaces) {
+        // Send via IPv4 on this interface
+        if (_ipv4MulticastConn != null) {
+          final hasIPv4 = iface.addresses.any(
+            (a) => a.type == InternetAddressType.IPv4 && !a.isLoopback,
+          );
+          if (hasIPv4) {
+            try {
+              _ipv4MulticastConn!.setMulticastInterface(iface);
+              _ipv4MulticastConn!.send(
+                data,
+                InternetAddress(ipv4mDNS),
+                mDNSPort,
+              );
+              _log('Sent IPv4 query via interface ${iface.name}');
+              ipv4Success++;
+            } catch (e) {
+              _log('Failed to send IPv4 query via ${iface.name}: $e');
+            }
+          }
+        }
+
+        // Send via IPv6 on this interface
+        if (_ipv6MulticastConn != null) {
+          final hasIPv6 = iface.addresses.any(
+            (a) => a.type == InternetAddressType.IPv6 && !a.isLoopback,
+          );
+          if (hasIPv6) {
+            try {
+              _ipv6MulticastConn!.setMulticastInterface(iface);
+              _ipv6MulticastConn!.send(
+                data,
+                InternetAddress(ipv6mDNS),
+                mDNSPort,
+              );
+              _log('Sent IPv6 query via interface ${iface.name}');
+              ipv6Success++;
+            } catch (e) {
+              _log('Failed to send IPv6 query via ${iface.name}: $e');
+            }
+          }
+        }
+      }
+    } else {
+      // Fallback: send on default interface
+      if (_ipv4MulticastConn != null) {
+        try {
+          _ipv4MulticastConn!.send(data, InternetAddress(ipv4mDNS), mDNSPort);
+          _log('Sent query via IPv4 multicast to $ipv4mDNS:$mDNSPort');
+          ipv4Success++;
+        } catch (e) {
+          _log('Failed to send query via IPv4 multicast: $e');
+        }
+      }
+
+      if (_ipv6MulticastConn != null) {
+        try {
+          _ipv6MulticastConn!.send(data, InternetAddress(ipv6mDNS), mDNSPort);
+          _log('Sent query via IPv6 multicast to $ipv6mDNS:$mDNSPort');
+          ipv6Success++;
+        } catch (e) {
+          _log('Failed to send query via IPv6 multicast: $e');
+        }
       }
     }
 
-    if (_ipv6MulticastConn != null) {
-      try {
-        _ipv6MulticastConn!.send(data, InternetAddress(ipv6mDNS), mDNSPort);
-        _log('Sent query via IPv6 multicast to $ipv6mDNS:$mDNSPort');
-        ipv6Error = false;
-      } catch (e) {
-        _log('Failed to send query via IPv6 multicast: $e');
-      }
+    if (ipv4Success == 0 && ipv6Success == 0) {
+      _log('Failed to send query on any connection');
+      throw StateError('Failed to send mDNS query on any connection');
     }
 
-    if (ipv4Error && ipv6Error) {
-      _log('Failed to send query on both IPv4 and IPv6 connections');
-      throw StateError(
-        'Failed to send mDNS query on both IPv4 and IPv6 connections',
-      );
-    }
-
-    if (!ipv4Error && !ipv6Error) {
-      _log('Query sent successfully on both IPv4 and IPv6 connections');
-    } else if (!ipv4Error) {
-      _log('Query sent successfully on IPv4 connection only');
-    } else if (!ipv6Error) {
-      _log('Query sent successfully on IPv6 connection only');
-    }
+    _log(
+      'Query sent successfully: IPv4 on $ipv4Success interface(s), IPv6 on $ipv6Success interface(s)',
+    );
   }
 
   /// Ensures an entry exists in the progress map
