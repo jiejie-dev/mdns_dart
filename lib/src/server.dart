@@ -206,7 +206,10 @@ class MDNSServer {
     if (event == RawSocketEvent.read) {
       final datagram = socket.receive();
       if (datagram == null) return;
-
+      _log(
+        'Received packet from ${datagram.address.address}:${datagram.port} '
+        '(${datagram.data.length} bytes)',
+      );
       try {
         _parseAndHandleQuery(
           datagram.data,

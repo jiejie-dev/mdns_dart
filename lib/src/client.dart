@@ -205,12 +205,7 @@ class MDNSClient {
     );
 
     try {
-      await client._initialize();
-
-      if (params.networkInterface != null) {
-        await client._setInterface(params.networkInterface!);
-      }
-
+      await client._initialize(params.networkInterface);
       return client._performQuery(params);
     } catch (e) {
       await client.close();
@@ -292,18 +287,48 @@ class _Client {
     }
   }
 
-  /// Initializes the client sockets
-  Future<void> _initialize() async {
-    _log('Initializing mDNS client...');
-
+  Future<void> _bindUnicastSocket(NetworkInterface? iface) async {
     // Create unicast connections
+    var ipv4Addr = InternetAddress.anyIPv4;
+    var ipv6Addr = InternetAddress.anyIPv6;
+
+    if (iface != null) {
+      _log('Binding unicast sockets to interface: ${iface.name}');
+      // try {
+      if (_useIPv4) {
+        ipv4Addr = iface.addresses.firstWhere(
+          (addr) => addr.type == InternetAddressType.IPv4,
+          orElse: () {
+            _log(
+              'Failed to find IPv4 address on interface ${iface.name}: falling back to anyIPv4',
+            );
+            return InternetAddress.anyIPv4;
+          },
+        );
+      }
+
+      if (_useIPv6) {
+        ipv6Addr = iface.addresses.firstWhere(
+          (addr) => addr.type == InternetAddressType.IPv6,
+          orElse: () {
+            _log(
+              'Failed to find IPv6 address on interface ${iface.name}: falling back to anyIPv6',
+            );
+            return InternetAddress.anyIPv6;
+          },
+        );
+      }
+    }
+
     if (_useIPv4) {
       try {
         _ipv4UnicastConn = await RawDatagramSocket.bind(
-          InternetAddress.anyIPv4,
+          ipv4Addr,
           0,
         );
-        _log('IPv4 unicast socket bound to port ${_ipv4UnicastConn!.port}');
+
+        _log(
+            'IPv4 unicast socket bound to port ${_ipv4UnicastConn?.address}:${_ipv4UnicastConn!.port}');
       } catch (e) {
         _log('Failed to create IPv4 unicast socket: $e');
       }
@@ -312,10 +337,11 @@ class _Client {
     if (_useIPv6) {
       try {
         _ipv6UnicastConn = await RawDatagramSocket.bind(
-          InternetAddress.anyIPv6,
+          ipv6Addr,
           0,
         );
-        _log('IPv6 unicast socket bound to port ${_ipv6UnicastConn!.port}');
+        _log(
+            'IPv6 unicast socket bound to ${_ipv6UnicastConn?.address}:${_ipv6UnicastConn!.port}');
       } catch (e) {
         _log('Failed to create IPv6 unicast socket: $e');
         // IPv6 unicast failed
@@ -326,16 +352,18 @@ class _Client {
       _log('Error: Failed to bind to any unicast UDP port');
       throw StateError('Failed to bind to any unicast UDP port');
     }
+  }
 
+  Future<void> _bindMulticastSocket(NetworkInterface? iface) async {
     // Create multicast connections
     if (_useIPv4) {
       try {
-        _ipv4MulticastConn = await _bindMulticastSocket(
+        _ipv4MulticastConn = await RawDatagramSocket.bind(
           InternetAddress.anyIPv4,
           mDNSPort,
           reusePort: _reusePort,
           reuseAddress: _reuseAddress,
-          multicastHops: _multicastHops,
+          ttl: _multicastHops,
         );
         _ipv4MulticastConn!.joinMulticast(InternetAddress(ipv4mDNS));
         _log(
@@ -350,12 +378,12 @@ class _Client {
 
     if (_useIPv6) {
       try {
-        _ipv6MulticastConn = await _bindMulticastSocket(
+        _ipv6MulticastConn = await RawDatagramSocket.bind(
           InternetAddress.anyIPv6,
           mDNSPort,
           reusePort: _reusePort,
           reuseAddress: _reuseAddress,
-          multicastHops: _multicastHops,
+          ttl: _multicastHops,
         );
         _ipv6MulticastConn!.joinMulticast(InternetAddress(ipv6mDNS));
         _log(
@@ -372,7 +400,14 @@ class _Client {
       _log('Error: Failed to bind to any multicast UDP port');
       throw StateError('Failed to bind to any multicast UDP port');
     }
+    if (iface != null) await _setMulticastInterface(iface);
+  }
 
+  /// Initializes the client sockets
+  Future<void> _initialize(NetworkInterface? iface) async {
+    _log('Initializing mDNS client...');
+    await _bindUnicastSocket(iface);
+    await _bindMulticastSocket(iface);
     // Disable combinations where we don't have both unicast and multicast
     if (_ipv4UnicastConn == null || _ipv4MulticastConn == null) {
       if (_ipv4UnicastConn == null && _ipv4MulticastConn != null) {
@@ -411,70 +446,9 @@ class _Client {
     );
   }
 
-  /// Binds a multicast socket with configurable socket options
-  ///
-  /// Throws exceptions on binding failures rather than returning null.
-  /// Users should handle exceptions based on their requirements.
-  ///
-  /// Note for Android: If you encounter binding issues with reusePort=true,
-  /// try setting reusePort=false and handle socket conflicts manually.
-  Future<RawDatagramSocket> _bindMulticastSocket(
-    InternetAddress address,
-    int port, {
-    required bool reusePort,
-    required bool reuseAddress,
-    required int multicastHops,
-  }) async {
-    // Try binding with the specified options
-    final socket = await RawDatagramSocket.bind(
-      address,
-      port,
-      reuseAddress: reuseAddress,
-      reusePort: reusePort,
-      ttl: multicastHops,
-    );
-
-    return socket;
-  }
-
-  /// Sets the multicast interface and rebinds unicast socket to interface IP
-  Future<void> _setInterface(NetworkInterface iface) async {
-    _log('Setting network interface to: ${iface.name}');
-
-    // Key fix: Rebind unicast socket to specific interface IP
-    if (_useIPv4) {
-      // Close existing unicast connection
-      _ipv4UnicastConn?.close();
-
-      try {
-        // Find IPv4 address on this interface
-        final ipv4Addr = iface.addresses.firstWhere(
-          (addr) => addr.type == InternetAddressType.IPv4,
-        );
-
-        // Rebind unicast socket to specific interface IP
-        _ipv4UnicastConn = await RawDatagramSocket.bind(
-          ipv4Addr, // Bind to specific interface IP, not anyIPv4
-          0,
-        );
-        _log(
-          'IPv4 unicast socket rebound to interface ${iface.name} at ${ipv4Addr.address}',
-        );
-      } catch (e) {
-        _log('Failed to bind IPv4 socket to interface ${iface.name}: $e');
-        // Interface binding failed, try fallback
-        try {
-          _ipv4UnicastConn = await RawDatagramSocket.bind(
-            InternetAddress.anyIPv4,
-            0,
-          );
-          _log('IPv4 unicast socket fallback to anyIPv4 successful');
-        } catch (e2) {
-          _log('IPv4 unicast socket fallback failed: $e2');
-          _ipv4UnicastConn = null;
-        }
-      }
-    }
+  /// Sets the multicast interface
+  Future<void> _setMulticastInterface(NetworkInterface iface) async {
+    _log('Setting network multicast interface to: ${iface.name}');
 
     // Set multicast interface
     if (_ipv4MulticastConn != null) {

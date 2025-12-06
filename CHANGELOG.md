@@ -1,3 +1,9 @@
+## 2.1.0
+- Added note on client_docker0.dart example about unicast responses in Docker environments.
+- Added missing logic to bind the IPv6 unicast socket to the interface's specific IP address.
+- Bound unicast sockets to the specific IP address of the selected network interface on initialization.
+- Refactored `_initialize` from `_Client` and split into `_bindUnicastSocket` and `_bindMulticastSocket` for better maintainability.
+
 ## 2.0.1
 - Refactored `_createResponse` from `MDNSServer` to use `DNSFlags` constants for clarity.
 - Improved documentation for `QueryParams.service` parameter to clarify expected format.
