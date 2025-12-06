@@ -44,6 +44,14 @@ class MDNSServerConfig {
   /// Higher values allow wider propagation but may not be necessary for local discovery.
   final int multicastHops;
 
+  /// Whether to join multicast group on all available network interfaces
+  ///
+  /// When true, the server will join the multicast group on all non-loopback
+  /// network interfaces, which is required for cross-platform/cross-machine
+  /// service discovery.
+  /// When false, only the default interface or specified networkInterface is used.
+  final bool joinMulticastOnAllInterfaces;
+
   const MDNSServerConfig({
     required this.zone,
     this.networkInterface,
@@ -52,6 +60,7 @@ class MDNSServerConfig {
     this.reusePort = false,
     this.reuseAddress = true,
     this.multicastHops = 1,
+    this.joinMulticastOnAllInterfaces = true,
   });
 }
 
@@ -79,6 +88,13 @@ class MDNSServer {
     _log('Starting mDNS server...');
 
     try {
+      // Get all network interfaces for multicast join
+      List<NetworkInterface> interfaces = [];
+      if (_config.joinMulticastOnAllInterfaces) {
+        interfaces = await NetworkInterface.list();
+        _log('Found ${interfaces.length} network interfaces');
+      }
+
       // Create IPv4 multicast socket
       try {
         _ipv4Socket = await _bindMulticastSocket(
@@ -89,8 +105,26 @@ class MDNSServer {
           multicastHops: _config.multicastHops,
         );
 
-        // Join multicast group
-        _ipv4Socket!.joinMulticast(InternetAddress(_ipv4MulticastAddr));
+        // Join multicast group on all interfaces or specified interface
+        if (_config.joinMulticastOnAllInterfaces) {
+          await _joinMulticastOnAllInterfaces(
+            _ipv4Socket!,
+            InternetAddress(_ipv4MulticastAddr),
+            interfaces,
+            InternetAddressType.IPv4,
+          );
+        } else if (_config.networkInterface != null) {
+          _ipv4Socket!.joinMulticast(
+            InternetAddress(_ipv4MulticastAddr),
+            _config.networkInterface,
+          );
+          _log(
+            'IPv4: Joined multicast on interface ${_config.networkInterface!.name}',
+          );
+        } else {
+          _ipv4Socket!.joinMulticast(InternetAddress(_ipv4MulticastAddr));
+          _log('IPv4: Joined multicast on default interface');
+        }
 
         // Set network interface if specified
         if (_config.networkInterface != null) {
@@ -118,8 +152,26 @@ class MDNSServer {
           multicastHops: _config.multicastHops,
         );
 
-        // Join multicast group
-        _ipv6Socket!.joinMulticast(InternetAddress(_ipv6MulticastAddr));
+        // Join multicast group on all interfaces or specified interface
+        if (_config.joinMulticastOnAllInterfaces) {
+          await _joinMulticastOnAllInterfaces(
+            _ipv6Socket!,
+            InternetAddress(_ipv6MulticastAddr),
+            interfaces,
+            InternetAddressType.IPv6,
+          );
+        } else if (_config.networkInterface != null) {
+          _ipv6Socket!.joinMulticast(
+            InternetAddress(_ipv6MulticastAddr),
+            _config.networkInterface,
+          );
+          _log(
+            'IPv6: Joined multicast on interface ${_config.networkInterface!.name}',
+          );
+        } else {
+          _ipv6Socket!.joinMulticast(InternetAddress(_ipv6MulticastAddr));
+          _log('IPv6: Joined multicast on default interface');
+        }
 
         // Set network interface if specified (IPv6)
         if (_config.networkInterface != null) {
@@ -199,6 +251,47 @@ class MDNSServer {
     );
 
     return socket;
+  }
+
+  /// Joins multicast group on all available network interfaces
+  ///
+  /// This is crucial for cross-platform/cross-machine mDNS discovery.
+  /// Without joining multicast on the correct network interface,
+  /// mDNS packets won't be received from other machines.
+  Future<void> _joinMulticastOnAllInterfaces(
+    RawDatagramSocket socket,
+    InternetAddress multicastAddr,
+    List<NetworkInterface> interfaces,
+    InternetAddressType addressType,
+  ) async {
+    final typeStr = addressType == InternetAddressType.IPv4 ? 'IPv4' : 'IPv6';
+    int joinedCount = 0;
+
+    for (final iface in interfaces) {
+      // Check if interface has addresses of the required type
+      final hasMatchingAddress = iface.addresses.any(
+        (addr) => addr.type == addressType && !addr.isLoopback,
+      );
+
+      if (!hasMatchingAddress) continue;
+
+      try {
+        socket.joinMulticast(multicastAddr, iface);
+        joinedCount++;
+        _log('$typeStr: Joined multicast on interface ${iface.name}');
+      } catch (e) {
+        // Some interfaces may not support multicast, which is fine
+        _log('$typeStr: Failed to join multicast on ${iface.name}: $e');
+      }
+    }
+
+    if (joinedCount == 0) {
+      // Fallback to default interface
+      socket.joinMulticast(multicastAddr);
+      _log('$typeStr: Joined multicast on default interface (fallback)');
+    } else {
+      _log('$typeStr: Joined multicast on $joinedCount interfaces');
+    }
   }
 
   /// Handle incoming packets

@@ -163,6 +163,14 @@ class QueryParams {
   /// Higher values allow wider propagation but may not be necessary for local discovery.
   final int multicastHops;
 
+  /// Whether to join multicast group on all available network interfaces
+  ///
+  /// When true, the client will join the multicast group on all non-loopback
+  /// network interfaces, which is required for cross-platform/cross-machine
+  /// service discovery.
+  /// When false, only the default interface or specified networkInterface is used.
+  final bool joinMulticastOnAllInterfaces;
+
   /// Custom logger function (optional)
   ///
   /// If provided, this function will be called with log messages during the query process.
@@ -180,6 +188,7 @@ class QueryParams {
     this.reusePort = false,
     this.reuseAddress = true,
     this.multicastHops = 1,
+    this.joinMulticastOnAllInterfaces = true,
     this.logger,
   });
 
@@ -201,6 +210,7 @@ class MDNSClient {
       reusePort: params.reusePort,
       reuseAddress: params.reuseAddress,
       multicastHops: params.multicastHops,
+      joinMulticastOnAllInterfaces: params.joinMulticastOnAllInterfaces,
       logger: params.logger,
     );
 
@@ -233,6 +243,7 @@ class MDNSClient {
     bool reusePort = false,
     bool reuseAddress = true,
     int multicastHops = 1,
+    bool joinMulticastOnAllInterfaces = true,
     void Function(String message)? logger,
   }) async {
     final params = QueryParams(
@@ -244,6 +255,7 @@ class MDNSClient {
       reusePort: reusePort,
       reuseAddress: reuseAddress,
       multicastHops: multicastHops,
+      joinMulticastOnAllInterfaces: joinMulticastOnAllInterfaces,
       logger: logger,
     );
 
@@ -259,6 +271,7 @@ class _Client {
   final bool _reusePort;
   final bool _reuseAddress;
   final int _multicastHops;
+  final bool _joinMulticastOnAllInterfaces;
   final void Function(String message)? _logger;
 
   RawDatagramSocket? _ipv4UnicastConn;
@@ -275,12 +288,14 @@ class _Client {
     required bool reusePort,
     required bool reuseAddress,
     required int multicastHops,
+    required bool joinMulticastOnAllInterfaces,
     void Function(String message)? logger,
   })  : _useIPv4 = useIPv4,
         _useIPv6 = useIPv6,
         _reusePort = reusePort,
         _reuseAddress = reuseAddress,
         _multicastHops = multicastHops,
+        _joinMulticastOnAllInterfaces = joinMulticastOnAllInterfaces,
         _logger = logger {
     if (!_useIPv4 && !_useIPv6) {
       throw ArgumentError('Must enable at least one of IPv4 and IPv6');
@@ -355,6 +370,13 @@ class _Client {
   }
 
   Future<void> _bindMulticastSocket(NetworkInterface? iface) async {
+    // Get all network interfaces for multicast join if needed
+    List<NetworkInterface> interfaces = [];
+    if (_joinMulticastOnAllInterfaces) {
+      interfaces = await NetworkInterface.list();
+      _log('Found ${interfaces.length} network interfaces');
+    }
+
     // Create multicast connections
     if (_useIPv4) {
       try {
@@ -365,7 +387,23 @@ class _Client {
           reuseAddress: _reuseAddress,
           ttl: _multicastHops,
         );
-        _ipv4MulticastConn!.joinMulticast(InternetAddress(ipv4mDNS));
+
+        // Join multicast group on all interfaces or specified interface
+        if (_joinMulticastOnAllInterfaces) {
+          await _joinMulticastGroupOnAllInterfaces(
+            _ipv4MulticastConn!,
+            InternetAddress(ipv4mDNS),
+            interfaces,
+            InternetAddressType.IPv4,
+          );
+        } else if (iface != null) {
+          _ipv4MulticastConn!.joinMulticast(InternetAddress(ipv4mDNS), iface);
+          _log('IPv4: Joined multicast on interface ${iface.name}');
+        } else {
+          _ipv4MulticastConn!.joinMulticast(InternetAddress(ipv4mDNS));
+          _log('IPv4: Joined multicast on default interface');
+        }
+
         _log(
           'IPv4 multicast socket bound to port $mDNSPort with reusePort=$_reusePort, reuseAddress=$_reuseAddress, multicastHops=$_multicastHops',
         );
@@ -385,7 +423,23 @@ class _Client {
           reuseAddress: _reuseAddress,
           ttl: _multicastHops,
         );
-        _ipv6MulticastConn!.joinMulticast(InternetAddress(ipv6mDNS));
+
+        // Join multicast group on all interfaces or specified interface
+        if (_joinMulticastOnAllInterfaces) {
+          await _joinMulticastGroupOnAllInterfaces(
+            _ipv6MulticastConn!,
+            InternetAddress(ipv6mDNS),
+            interfaces,
+            InternetAddressType.IPv6,
+          );
+        } else if (iface != null) {
+          _ipv6MulticastConn!.joinMulticast(InternetAddress(ipv6mDNS), iface);
+          _log('IPv6: Joined multicast on interface ${iface.name}');
+        } else {
+          _ipv6MulticastConn!.joinMulticast(InternetAddress(ipv6mDNS));
+          _log('IPv6: Joined multicast on default interface');
+        }
+
         _log(
           'IPv6 multicast socket bound to port $mDNSPort with reusePort=$_reusePort, reuseAddress=$_reuseAddress, multicastHops=$_multicastHops',
         );
@@ -400,7 +454,50 @@ class _Client {
       _log('Error: Failed to bind to any multicast UDP port');
       throw StateError('Failed to bind to any multicast UDP port');
     }
-    if (iface != null) await _setMulticastInterface(iface);
+    if (iface != null && !_joinMulticastOnAllInterfaces) {
+      await _setMulticastInterface(iface);
+    }
+  }
+
+  /// Joins multicast group on all available network interfaces
+  ///
+  /// This is crucial for cross-platform/cross-machine mDNS discovery.
+  /// Without joining multicast on the correct network interface,
+  /// mDNS packets won't be received from other machines.
+  Future<void> _joinMulticastGroupOnAllInterfaces(
+    RawDatagramSocket socket,
+    InternetAddress multicastAddr,
+    List<NetworkInterface> interfaces,
+    InternetAddressType addressType,
+  ) async {
+    final typeStr = addressType == InternetAddressType.IPv4 ? 'IPv4' : 'IPv6';
+    int joinedCount = 0;
+
+    for (final iface in interfaces) {
+      // Check if interface has addresses of the required type
+      final hasMatchingAddress = iface.addresses.any(
+        (addr) => addr.type == addressType && !addr.isLoopback,
+      );
+
+      if (!hasMatchingAddress) continue;
+
+      try {
+        socket.joinMulticast(multicastAddr, iface);
+        joinedCount++;
+        _log('$typeStr: Joined multicast on interface ${iface.name}');
+      } catch (e) {
+        // Some interfaces may not support multicast, which is fine
+        _log('$typeStr: Failed to join multicast on ${iface.name}: $e');
+      }
+    }
+
+    if (joinedCount == 0) {
+      // Fallback to default interface
+      socket.joinMulticast(multicastAddr);
+      _log('$typeStr: Joined multicast on default interface (fallback)');
+    } else {
+      _log('$typeStr: Joined multicast on $joinedCount interfaces');
+    }
   }
 
   /// Initializes the client sockets
