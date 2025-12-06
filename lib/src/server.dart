@@ -361,17 +361,32 @@ class MDNSServer {
     final multicastRecords = <DNSResourceRecord>[];
     final unicastRecords = <DNSResourceRecord>[];
 
+    // Log all questions in the query
+    _log(
+      'Processing query with ${query.questions.length} question(s) from $from:$port',
+    );
+
     // Handle each question
     for (final question in query.questions) {
+      _log(
+        '  Question: ${question.name} (type: ${question.type}, class: ${question.dnsClass & 0x7FFF})',
+      );
+
       final records = _config.zone.records(question);
 
-      if (records.isEmpty) continue;
+      if (records.isEmpty) {
+        _log('    No matching records found');
+        continue;
+      }
+
+      _log('    Found ${records.length} matching record(s)');
 
       // Determine if unicast response is requested
       // Check the unicast bit (top bit of qclass)
       final wantsUnicast = (question.dnsClass & 0x8000) != 0;
 
       if (wantsUnicast) {
+        _log('    Client requested unicast response');
         unicastRecords.addAll(records);
       } else {
         multicastRecords.addAll(records);
