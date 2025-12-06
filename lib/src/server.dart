@@ -138,7 +138,11 @@ class MDNSServer {
       }
 
       if (_ipv4Socket == null && _ipv6Socket == null) {
-        throw StateError('Failed to create any multicast sockets');
+        throw StateError(
+          'Failed to create any multicast sockets. '
+          'Port $_mdnsPort may be in use by another process (e.g., system mDNS service). '
+          'Try enabling reusePort: true in MDNSServerConfig to share the port.',
+        );
       }
 
       _isRunning = true;

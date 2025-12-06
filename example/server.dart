@@ -36,8 +36,15 @@ void main() async {
 
   print('Service: ${service.instance} at ${localIP.address}:${service.port}');
 
-  // Start server
-  final server = MDNSServer(MDNSServerConfig(zone: service));
+  // Start server with reusePort enabled to allow sharing port 5353 with system mDNS service
+  final server = MDNSServer(
+    MDNSServerConfig(
+      zone: service,
+      reusePort: !Platform
+          .isWindows, // Allow multiple processes to bind to port 5353 (needed on macOS)
+      reuseAddress: true,
+    ),
+  );
 
   try {
     await server.start();
