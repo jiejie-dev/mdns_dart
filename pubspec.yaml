@@ -12,7 +12,7 @@ topics:
   - networking
 
 environment:
-  sdk: ">=3.9.2 <4.0.0"
+  sdk: ^3.8.1
 
 # No external dependencies - pure Dart implementation
 dependencies:
