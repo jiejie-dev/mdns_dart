@@ -1,3 +1,7 @@
+## 2.1.1
+
+ - **DOCS**(mdns_dart): 补齐文档目录分层.
+
 ## 2.1.0
 - Added note on client_docker0.dart example about unicast responses in Docker environments.
 - Added missing logic to bind the IPv6 unicast socket to the interface's specific IP address.
