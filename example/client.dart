@@ -5,10 +5,30 @@ import 'package:mdns_dart/mdns_dart.dart';
 /// Simple mDNS client example
 void main(List<String> arguments) async {
   final parser = ArgParser()
-    ..addFlag('debug', abbr: 'd', help: 'Enable debug logging', negatable: false)
-    ..addFlag('help', abbr: 'h', help: 'Show this help message', negatable: false)
-    ..addOption('service', abbr: 's', help: 'Service type to discover', defaultsTo: '_puupee._tcp')
-    ..addOption('timeout', abbr: 't', help: 'Discovery timeout in seconds', defaultsTo: '10');
+    ..addFlag(
+      'debug',
+      abbr: 'd',
+      help: 'Enable debug logging',
+      negatable: false,
+    )
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      help: 'Show this help message',
+      negatable: false,
+    )
+    ..addOption(
+      'service',
+      abbr: 's',
+      help: 'Service type to discover',
+      defaultsTo: '_felorx._tcp',
+    )
+    ..addOption(
+      'timeout',
+      abbr: 't',
+      help: 'Discovery timeout in seconds',
+      defaultsTo: '10',
+    );
 
   late ArgResults args;
   try {

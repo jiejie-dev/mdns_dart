@@ -6,15 +6,31 @@ import 'package:mdns_dart/mdns_dart.dart';
 /// Simple mDNS server example
 void main(List<String> arguments) async {
   final parser = ArgParser()
-    ..addFlag('debug',
-        abbr: 'd', help: 'Enable debug logging', negatable: false)
-    ..addFlag('help',
-        abbr: 'h', help: 'Show this help message', negatable: false)
-    ..addOption('service',
-        abbr: 's', help: 'Service type', defaultsTo: '_puupee._tcp')
+    ..addFlag(
+      'debug',
+      abbr: 'd',
+      help: 'Enable debug logging',
+      negatable: false,
+    )
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      help: 'Show this help message',
+      negatable: false,
+    )
+    ..addOption(
+      'service',
+      abbr: 's',
+      help: 'Service type',
+      defaultsTo: '_felorx._tcp',
+    )
     ..addOption('port', abbr: 'p', help: 'Service port', defaultsTo: '12056')
-    ..addOption('name',
-        abbr: 'n', help: 'Instance name', defaultsTo: 'Dart Test Server');
+    ..addOption(
+      'name',
+      abbr: 'n',
+      help: 'Instance name',
+      defaultsTo: 'Dart Test Server',
+    );
 
   late ArgResults args;
   try {
