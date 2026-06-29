@@ -1,3 +1,7 @@
+## 2.1.2
+
+ - **REFACTOR**(mdns_dart): 迁移 Felorx mDNS 示例服务名.
+
 ## 2.1.1
 
  - **DOCS**(mdns_dart): 补齐文档目录分层.
