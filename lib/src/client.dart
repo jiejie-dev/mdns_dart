@@ -216,10 +216,28 @@ class MDNSClient {
 
     try {
       await client._initialize(params.networkInterface);
-      return client._performQuery(params);
+      return _performQueryAndClose(client, params);
     } catch (e) {
       await client.close();
       rethrow;
+    }
+  }
+
+  /// Runs a query and always releases its UDP sockets afterwards.
+  ///
+  /// A discovery creates both unicast and multicast sockets.  Keeping those
+  /// sockets alive after the result stream completes lets queued datagrams
+  /// reach a listener whose message controller has already closed.  Besides
+  /// leaking sockets during periodic discovery, that race throws
+  /// `StateError: Cannot add event after closing` on the main isolate.
+  static Stream<ServiceEntry> _performQueryAndClose(
+    _Client client,
+    QueryParams params,
+  ) async* {
+    try {
+      yield* client._performQuery(params);
+    } finally {
+      await client.close();
     }
   }
 
@@ -797,7 +815,12 @@ class _Client {
     _log('Started listening on socket ${socket.address}:${socket.port}');
 
     return socket.listen((event) {
-      if (event == RawSocketEvent.read && !_closed) {
+      // Cancelling a RawDatagramSocket subscription does not discard an
+      // already queued read event.  The controller can therefore have closed
+      // between a query timing out and this callback running.
+      if (event == RawSocketEvent.read &&
+          !_closed &&
+          !messageController.isClosed) {
         final packet = socket.receive();
         if (packet != null) {
           _log(
