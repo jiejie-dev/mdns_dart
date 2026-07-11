@@ -1,7 +1,7 @@
 name: mdns_dart
 resolution: workspace
 description: A comprehensive mDNS (Multicast DNS) service discovery and advertisement library for Dart, ported from HashiCorp Go implementation.
-version: 2.1.2
+version: 2.1.3
 homepage: https://github.com/animeshxd/mdns_dart
 repository: https://github.com/animeshxd/mdns_dart
 topics:

@@ -1,3 +1,7 @@
+## 2.1.3
+
+ - **FIX**(mdns_dart): 修复 mDNS 查询关闭后的流异常.
+
 ## 2.1.2
 
  - **REFACTOR**(mdns_dart): 迁移 Felorx mDNS 示例服务名.
