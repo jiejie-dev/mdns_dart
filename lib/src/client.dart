@@ -815,14 +815,19 @@ class _Client {
     _log('Started listening on socket ${socket.address}:${socket.port}');
 
     return socket.listen((event) {
-      // Cancelling a RawDatagramSocket subscription does not discard an
-      // already queued read event.  The controller can therefore have closed
-      // between a query timing out and this callback running.
-      if (event == RawSocketEvent.read &&
-          !_closed &&
-          !messageController.isClosed) {
+      if (event != RawSocketEvent.read) return;
+
+      // A read event is level-triggered: if a queued datagram is not consumed,
+      // dart:io schedules another read-event microtask immediately. The query
+      // controller may already have closed while such an event was queued, so
+      // always drain the socket and only guard delivery to the controller.
+      // Otherwise the unread datagram causes an endless microtask loop that
+      // starves the UI isolate.
+      while (true) {
         final packet = socket.receive();
-        if (packet != null) {
+        if (packet == null) break;
+
+        if (!_closed && !messageController.isClosed) {
           _log(
             'Received ${packet.data.length} bytes from ${packet.address}:${packet.port}',
           );
