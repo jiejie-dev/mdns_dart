@@ -94,7 +94,7 @@ class MDNSServer {
       // Get all network interfaces for multicast join
       List<NetworkInterface> interfaces = [];
       if (_config.joinMulticastOnAllInterfaces) {
-        interfaces = await NetworkInterface.list();
+        interfaces = await NetworkInterface.list(includeLinkLocal: true);
         // Filter to interfaces with non-loopback addresses and save for sending
         _multicastInterfaces = interfaces
             .where((i) => i.addresses.any((a) => !a.isLoopback))
@@ -314,21 +314,23 @@ class MDNSServer {
   /// Handle incoming packets
   void _handlePacket(RawSocketEvent event, RawDatagramSocket socket) {
     if (event == RawSocketEvent.read) {
-      final datagram = socket.receive();
-      if (datagram == null) return;
-      _log(
-        'Received packet from ${datagram.address.address}:${datagram.port} '
-        '(${datagram.data.length} bytes)',
-      );
-      try {
-        _parseAndHandleQuery(
-          datagram.data,
-          datagram.address,
-          datagram.port,
-          socket,
+      while (true) {
+        final datagram = socket.receive();
+        if (datagram == null) break;
+        _log(
+          'Received packet from ${datagram.address.address}:${datagram.port} '
+          '(${datagram.data.length} bytes)',
         );
-      } catch (e) {
-        _log('Error handling packet: $e');
+        try {
+          _parseAndHandleQuery(
+            datagram.data,
+            datagram.address,
+            datagram.port,
+            socket,
+          );
+        } catch (e) {
+          _log('Error handling packet: $e');
+        }
       }
     }
   }
@@ -498,6 +500,15 @@ class MDNSServer {
   }
 
   /// Send a DNS response
+  bool _sendDatagram(
+    RawDatagramSocket socket,
+    List<int> data,
+    InternetAddress address,
+    int port,
+  ) {
+    return socket.send(data, address, port) == data.length;
+  }
+
   void _sendResponse(
     DNSMessage response,
     RawDatagramSocket socket, {
@@ -510,7 +521,13 @@ class MDNSServer {
 
       if (isUnicast && targetAddress != null && targetPort != null) {
         // Send unicast response directly to querier
-        socket.send(data, targetAddress, targetPort);
+        if (!_sendDatagram(socket, data, targetAddress, targetPort)) {
+          _log(
+            'Unicast response send returned no data for '
+            '${targetAddress.address}:$targetPort',
+          );
+          return;
+        }
         _log(
           'Sent unicast response to ${targetAddress.address}:$targetPort (${data.length} bytes)',
         );
@@ -536,7 +553,12 @@ class MDNSServer {
 
             try {
               socket.setMulticastInterface(iface);
-              socket.send(data, multicastAddr, _mdnsPort);
+              if (!_sendDatagram(socket, data, multicastAddr, _mdnsPort)) {
+                _log(
+                  'Multicast response send returned no data via ${iface.name}',
+                );
+                continue;
+              }
               sentCount++;
               _log(
                 'Sent multicast response via ${iface.name} (${data.length} bytes)',
@@ -548,15 +570,21 @@ class MDNSServer {
 
           if (sentCount == 0) {
             // Fallback: send on default interface
-            socket.send(data, multicastAddr, _mdnsPort);
-            _log(
-              'Sent multicast response on default interface (${data.length} bytes)',
-            );
+            if (_sendDatagram(socket, data, multicastAddr, _mdnsPort)) {
+              _log(
+                'Sent multicast response on default interface (${data.length} bytes)',
+              );
+            } else {
+              _log('Multicast response send returned no data');
+            }
           }
         } else {
           // Send on default interface only
-          socket.send(data, multicastAddr, _mdnsPort);
-          _log('Sent multicast response (${data.length} bytes)');
+          if (_sendDatagram(socket, data, multicastAddr, _mdnsPort)) {
+            _log('Sent multicast response (${data.length} bytes)');
+          } else {
+            _log('Multicast response send returned no data');
+          }
         }
       }
     } catch (e) {

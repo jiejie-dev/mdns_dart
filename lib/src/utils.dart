@@ -25,11 +25,15 @@ extension RawDatagramSocketExtensions on RawDatagramSocket {
         ? RawSocketOption.IPv4MulticastInterface
         : RawSocketOption.IPv6MulticastInterface;
 
-    iface.addresses
-        .where((addr) => addr.type == address.type)
-        .forEach(
-          (addr) =>
-              setRawOption(RawSocketOption(level, option, addr.rawAddress)),
-        );
+    if (address.type == InternetAddressType.IPv4) {
+      final interfaceAddress = iface.addresses.firstWhere(
+        (addr) => addr.type == InternetAddressType.IPv4,
+      );
+      setRawOption(RawSocketOption(level, option, interfaceAddress.rawAddress));
+      return;
+    }
+
+    // IPV6_MULTICAST_IF expects an interface index, not an IPv6 address.
+    setRawOption(RawSocketOption.fromInt(level, option, iface.index));
   }
 }

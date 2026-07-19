@@ -40,6 +40,9 @@ class ServiceEntry {
   /// All TXT record fields
   List<String> infoFields;
 
+  /// Source address of the mDNS response that announced this service.
+  InternetAddress? sourceAddress;
+
   bool _hasTXT = false;
   bool _sent = false;
 
@@ -51,6 +54,7 @@ class ServiceEntry {
     this.port = 0,
     this.info = '',
     this.infoFields = const [],
+    this.sourceAddress,
   });
 
   /// Checks if we have all the info we need for a complete service
@@ -194,9 +198,7 @@ class QueryParams {
 
   /// Creates default parameters for a service
   factory QueryParams.defaultFor(String service) {
-    return QueryParams(
-      service: service,
-    );
+    return QueryParams(service: service);
   }
 }
 
@@ -311,13 +313,13 @@ class _Client {
     required int multicastHops,
     required bool joinMulticastOnAllInterfaces,
     void Function(String message)? logger,
-  })  : _useIPv4 = useIPv4,
-        _useIPv6 = useIPv6,
-        _reusePort = reusePort,
-        _reuseAddress = reuseAddress,
-        _multicastHops = multicastHops,
-        _joinMulticastOnAllInterfaces = joinMulticastOnAllInterfaces,
-        _logger = logger {
+  }) : _useIPv4 = useIPv4,
+       _useIPv6 = useIPv6,
+       _reusePort = reusePort,
+       _reuseAddress = reuseAddress,
+       _multicastHops = multicastHops,
+       _joinMulticastOnAllInterfaces = joinMulticastOnAllInterfaces,
+       _logger = logger {
     if (!_useIPv4 && !_useIPv6) {
       throw ArgumentError('Must enable at least one of IPv4 and IPv6');
     }
@@ -358,13 +360,11 @@ class _Client {
 
     if (_useIPv4) {
       try {
-        _ipv4UnicastConn = await RawDatagramSocket.bind(
-          ipv4Addr,
-          0,
-        );
+        _ipv4UnicastConn = await RawDatagramSocket.bind(ipv4Addr, 0);
 
         _log(
-            'IPv4 unicast socket bound to port ${_ipv4UnicastConn?.address}:${_ipv4UnicastConn!.port}');
+          'IPv4 unicast socket bound to port ${_ipv4UnicastConn?.address}:${_ipv4UnicastConn!.port}',
+        );
       } catch (e) {
         _log('Failed to create IPv4 unicast socket: $e');
       }
@@ -372,12 +372,10 @@ class _Client {
 
     if (_useIPv6) {
       try {
-        _ipv6UnicastConn = await RawDatagramSocket.bind(
-          ipv6Addr,
-          0,
-        );
+        _ipv6UnicastConn = await RawDatagramSocket.bind(ipv6Addr, 0);
         _log(
-            'IPv6 unicast socket bound to ${_ipv6UnicastConn?.address}:${_ipv6UnicastConn!.port}');
+          'IPv6 unicast socket bound to ${_ipv6UnicastConn?.address}:${_ipv6UnicastConn!.port}',
+        );
       } catch (e) {
         _log('Failed to create IPv6 unicast socket: $e');
         // IPv6 unicast failed
@@ -394,12 +392,14 @@ class _Client {
     // Get all network interfaces for multicast join if needed
     List<NetworkInterface> interfaces = [];
     if (_joinMulticastOnAllInterfaces) {
-      interfaces = await NetworkInterface.list();
+      interfaces = await NetworkInterface.list(includeLinkLocal: true);
       // Filter to interfaces with non-loopback addresses
       _multicastInterfaces = interfaces
           .where((i) => i.addresses.any((a) => !a.isLoopback))
           .toList();
-      _log('Found ${interfaces.length} network interfaces, ${_multicastInterfaces.length} usable for multicast');
+      _log(
+        'Found ${interfaces.length} network interfaces, ${_multicastInterfaces.length} usable for multicast',
+      );
     }
 
     // Create multicast connections
@@ -692,12 +692,14 @@ class _Client {
 
         for (final record in records) {
           final entry = _ensureEntry(inProgress, record.name);
+          entry.sourceAddress ??= msgAddr.source;
           entry.host = entry.host.isEmpty ? record.name : entry.host;
 
           switch (record) {
             case PTRRecord ptr:
               _log('Processing PTR record: ${ptr.name} -> ${ptr.target}');
               final targetEntry = _ensureEntry(inProgress, ptr.target);
+              targetEntry.sourceAddress ??= msgAddr.source;
               targetEntry.name = ptr.target;
               _alias(inProgress, ptr.target, ptr.name);
               break;
@@ -814,44 +816,65 @@ class _Client {
   ) {
     _log('Started listening on socket ${socket.address}:${socket.port}');
 
-    return socket.listen((event) {
-      if (event != RawSocketEvent.read) return;
+    return socket.listen(
+      (event) {
+        if (event != RawSocketEvent.read) return;
 
-      // A read event is level-triggered: if a queued datagram is not consumed,
-      // dart:io schedules another read-event microtask immediately. The query
-      // controller may already have closed while such an event was queued, so
-      // always drain the socket and only guard delivery to the controller.
-      // Otherwise the unread datagram causes an endless microtask loop that
-      // starves the UI isolate.
-      while (true) {
-        final packet = socket.receive();
-        if (packet == null) break;
+        // A read event is level-triggered: if a queued datagram is not consumed,
+        // dart:io schedules another read-event microtask immediately. The query
+        // controller may already have closed while such an event was queued, so
+        // always drain the socket and only guard delivery to the controller.
+        // Otherwise the unread datagram causes an endless microtask loop that
+        // starves the UI isolate.
+        while (true) {
+          final packet = socket.receive();
+          if (packet == null) break;
 
-        if (!_closed && !messageController.isClosed) {
-          _log(
-            'Received ${packet.data.length} bytes from ${packet.address}:${packet.port}',
-          );
-          final message = DNSMessage.parse(packet.data);
-          if (message != null &&
-              (message.header.ancount > 0 || message.header.arcount > 0)) {
+          if (!_closed && !messageController.isClosed) {
             _log(
-              'Parsed valid DNS message with ${message.header.ancount} answers and ${message.header.arcount} additional records',
+              'Received ${packet.data.length} bytes from ${packet.address}:${packet.port}',
             );
-            messageController.add(
-              _MessageAddr(message, packet.address, packet.port),
-            );
-          } else if (message == null) {
-            _log(
-              'Failed to parse DNS message from ${packet.address}:${packet.port}',
-            );
-          } else {
-            _log(
-              'Ignoring DNS message with no relevant records from ${packet.address}:${packet.port}',
-            );
+            final message = DNSMessage.parse(packet.data);
+            if (message != null &&
+                (message.header.ancount > 0 || message.header.arcount > 0)) {
+              _log(
+                'Parsed valid DNS message with ${message.header.ancount} answers and ${message.header.arcount} additional records',
+              );
+              messageController.add(
+                _MessageAddr(message, packet.address, packet.port),
+              );
+            } else if (message == null) {
+              _log(
+                'Failed to parse DNS message from ${packet.address}:${packet.port}',
+              );
+            } else {
+              _log(
+                'Ignoring DNS message with no relevant records from ${packet.address}:${packet.port}',
+              );
+            }
           }
         }
-      }
-    });
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _log('Socket ${socket.address}:${socket.port} error: $error');
+        _clearFailedSocket(socket);
+      },
+    );
+  }
+
+  void _clearFailedSocket(RawDatagramSocket socket) {
+    if (identical(socket, _ipv4UnicastConn)) _ipv4UnicastConn = null;
+    if (identical(socket, _ipv6UnicastConn)) _ipv6UnicastConn = null;
+    if (identical(socket, _ipv4MulticastConn)) _ipv4MulticastConn = null;
+    if (identical(socket, _ipv6MulticastConn)) _ipv6MulticastConn = null;
+  }
+
+  bool _sendDatagram(
+    RawDatagramSocket socket,
+    List<int> data,
+    InternetAddress address,
+  ) {
+    return socket.send(data, address, mDNSPort) == data.length;
   }
 
   /// Sends a DNS query to multicast addresses on all interfaces
@@ -864,7 +887,9 @@ class _Client {
 
     // If we have multiple interfaces, send on each one
     if (_joinMulticastOnAllInterfaces && _multicastInterfaces.isNotEmpty) {
-      _log('Sending query on ${_multicastInterfaces.length} network interfaces');
+      _log(
+        'Sending query on ${_multicastInterfaces.length} network interfaces',
+      );
 
       for (final iface in _multicastInterfaces) {
         // Send via IPv4 on this interface
@@ -875,11 +900,15 @@ class _Client {
           if (hasIPv4) {
             try {
               _ipv4MulticastConn!.setMulticastInterface(iface);
-              _ipv4MulticastConn!.send(
+              final sent = _sendDatagram(
+                _ipv4MulticastConn!,
                 data,
                 InternetAddress(ipv4mDNS),
-                mDNSPort,
               );
+              if (!sent) {
+                _log('IPv4 query send returned no data via ${iface.name}');
+                continue;
+              }
               _log('Sent IPv4 query via interface ${iface.name}');
               ipv4Success++;
             } catch (e) {
@@ -896,11 +925,15 @@ class _Client {
           if (hasIPv6) {
             try {
               _ipv6MulticastConn!.setMulticastInterface(iface);
-              _ipv6MulticastConn!.send(
+              final sent = _sendDatagram(
+                _ipv6MulticastConn!,
                 data,
                 InternetAddress(ipv6mDNS),
-                mDNSPort,
               );
+              if (!sent) {
+                _log('IPv6 query send returned no data via ${iface.name}');
+                continue;
+              }
               _log('Sent IPv6 query via interface ${iface.name}');
               ipv6Success++;
             } catch (e) {
@@ -913,7 +946,12 @@ class _Client {
       // Fallback: send on default interface
       if (_ipv4MulticastConn != null) {
         try {
-          _ipv4MulticastConn!.send(data, InternetAddress(ipv4mDNS), mDNSPort);
+          final sent = _sendDatagram(
+            _ipv4MulticastConn!,
+            data,
+            InternetAddress(ipv4mDNS),
+          );
+          if (!sent) throw StateError('IPv4 query send returned no data');
           _log('Sent query via IPv4 multicast to $ipv4mDNS:$mDNSPort');
           ipv4Success++;
         } catch (e) {
@@ -923,7 +961,12 @@ class _Client {
 
       if (_ipv6MulticastConn != null) {
         try {
-          _ipv6MulticastConn!.send(data, InternetAddress(ipv6mDNS), mDNSPort);
+          final sent = _sendDatagram(
+            _ipv6MulticastConn!,
+            data,
+            InternetAddress(ipv6mDNS),
+          );
+          if (!sent) throw StateError('IPv6 query send returned no data');
           _log('Sent query via IPv6 multicast to $ipv6mDNS:$mDNSPort');
           ipv6Success++;
         } catch (e) {
@@ -1021,20 +1064,21 @@ class _ServiceMatcher {
   final String _fullServicePattern;
 
   _ServiceMatcher(String service, String domain)
-      : _fullServicePattern = '${_trimDot(service)}.${_trimDot(domain)}.';
+    : _fullServicePattern = '${_trimDot(service)}.${_trimDot(domain)}.';
 
   /// Checks if a service entry name matches the requested service
   bool matches(String serviceName) {
     if (serviceName.isEmpty) return false;
 
     // Normalize the service name
-    final normalizedName =
-        serviceName.endsWith('.') ? serviceName : '$serviceName.';
+    final normalizedName = serviceName.endsWith('.')
+        ? serviceName
+        : '$serviceName.';
 
     // Direct match check
     if (normalizedName.toLowerCase().endsWith(
-          _fullServicePattern.toLowerCase(),
-        )) {
+      _fullServicePattern.toLowerCase(),
+    )) {
       return true;
     }
 
