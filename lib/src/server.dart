@@ -141,8 +141,12 @@ class MDNSServer {
         }
 
         // Listen for packets
-        final ipv4Subscription = _ipv4Socket!.listen(
-          (event) => _handlePacket(event, _ipv4Socket!),
+        final ipv4Socket = _ipv4Socket!;
+        final ipv4Subscription = ipv4Socket.listen(
+          (event) => _handlePacket(event, ipv4Socket),
+          onError: (Object error, StackTrace stackTrace) {
+            _handleSocketError(ipv4Socket, 'IPv4', error);
+          },
         );
         _subscriptions.add(ipv4Subscription);
 
@@ -188,8 +192,12 @@ class MDNSServer {
         }
 
         // Listen for packets
-        final ipv6Subscription = _ipv6Socket!.listen(
-          (event) => _handlePacket(event, _ipv6Socket!),
+        final ipv6Socket = _ipv6Socket!;
+        final ipv6Subscription = ipv6Socket.listen(
+          (event) => _handlePacket(event, ipv6Socket),
+          onError: (Object error, StackTrace stackTrace) {
+            _handleSocketError(ipv6Socket, 'IPv6', error);
+          },
         );
         _subscriptions.add(ipv6Subscription);
 
@@ -325,6 +333,32 @@ class MDNSServer {
     }
   }
 
+  /// Handle errors delivered asynchronously by [RawDatagramSocket].
+  ///
+  /// Dart reports UDP send failures through the socket stream in a later
+  /// microtask, so a `try/catch` around `send` cannot intercept them. The Dart
+  /// runtime closes the socket after reporting the error; clear the matching
+  /// reference and keep the other IP family available when possible.
+  void _handleSocketError(
+    RawDatagramSocket socket,
+    String addressFamily,
+    Object error,
+  ) {
+    _log('$addressFamily socket error: $error');
+
+    if (identical(socket, _ipv4Socket)) {
+      _ipv4Socket = null;
+    }
+    if (identical(socket, _ipv6Socket)) {
+      _ipv6Socket = null;
+    }
+
+    if (_ipv4Socket == null && _ipv6Socket == null) {
+      _isRunning = false;
+      _log('mDNS server stopped because all sockets failed');
+    }
+  }
+
   /// Parse incoming DNS message and handle queries
   void _parseAndHandleQuery(
     Uint8List data,
@@ -394,10 +428,16 @@ class MDNSServer {
       // Check the unicast bit (top bit of qclass)
       final wantsUnicast = (question.dnsClass & 0x8000) != 0;
 
-      if (wantsUnicast) {
+      if (wantsUnicast && isUsableUnicastTarget(from, port)) {
         _log('    Client requested unicast response');
         unicastRecords.addAll(records);
       } else {
+        if (wantsUnicast) {
+          _log(
+            '    Cannot send unicast response to ${from.address}:$port; '
+            'falling back to multicast',
+          );
+        }
         multicastRecords.addAll(records);
       }
     }
@@ -480,8 +520,9 @@ class MDNSServer {
         final multicastAddr = isIPv4
             ? InternetAddress(_ipv4MulticastAddr)
             : InternetAddress(_ipv6MulticastAddr);
-        final addrType =
-            isIPv4 ? InternetAddressType.IPv4 : InternetAddressType.IPv6;
+        final addrType = isIPv4
+            ? InternetAddressType.IPv4
+            : InternetAddressType.IPv6;
 
         if (_config.joinMulticastOnAllInterfaces &&
             _multicastInterfaces.isNotEmpty) {
@@ -508,7 +549,9 @@ class MDNSServer {
           if (sentCount == 0) {
             // Fallback: send on default interface
             socket.send(data, multicastAddr, _mdnsPort);
-            _log('Sent multicast response on default interface (${data.length} bytes)');
+            _log(
+              'Sent multicast response on default interface (${data.length} bytes)',
+            );
           }
         } else {
           // Send on default interface only
