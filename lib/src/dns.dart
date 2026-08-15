@@ -4,6 +4,7 @@
 /// capabilities, supporting all standard DNS record types used in mDNS.
 library;
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 /// DNS record types used in mDNS operations
@@ -635,11 +636,9 @@ class TXTRecord extends DNSResourceRecord {
 
     final rdataWriter = ByteDataWriter();
     for (final str in strings) {
-      final bytes = str.codeUnits;
+      final bytes = _encodeTxtString(str);
       rdataWriter.writeUint8(bytes.length);
-      for (final byte in bytes) {
-        rdataWriter.writeUint8(byte);
-      }
+      rdataWriter.writeBytes(bytes);
     }
     final rdataBytes = rdataWriter.toBytes();
 
@@ -651,11 +650,9 @@ class TXTRecord extends DNSResourceRecord {
   Uint8List get rdata {
     final writer = ByteDataWriter();
     for (final str in strings) {
-      final bytes = str.codeUnits;
+      final bytes = _encodeTxtString(str);
       writer.writeUint8(bytes.length);
-      for (final byte in bytes) {
-        writer.writeUint8(byte);
-      }
+      writer.writeBytes(bytes);
     }
     return writer.toBytes();
   }
@@ -675,7 +672,7 @@ class TXTRecord extends DNSResourceRecord {
       if (reader.offset + length > endOffset) break;
 
       final bytes = reader.readBytes(length);
-      strings.add(String.fromCharCodes(bytes));
+      strings.add(utf8.decode(bytes, allowMalformed: true));
     }
 
     return TXTRecord(
@@ -815,15 +812,36 @@ class NSECRecord extends DNSResourceRecord {
 // Helper functions for domain name encoding/decoding
 
 void _writeDomainName(ByteDataWriter writer, String name) {
-  final labels = name.split('.');
+  final labels = name
+      .split('.')
+      .where((label) => label.isNotEmpty)
+      .map((label) => MapEntry(label, Uint8List.fromList(utf8.encode(label))))
+      .toList(growable: false);
 
-  for (final label in labels) {
-    if (label.isNotEmpty) {
-      writer.writeUint8(label.length);
-      for (final char in label.codeUnits) {
-        writer.writeUint8(char);
-      }
+  var encodedNameLength = 1; // 根标签的终止字节。
+  for (final entry in labels) {
+    final bytes = entry.value;
+    if (bytes.length > 63) {
+      throw ArgumentError.value(
+        entry.key,
+        'name',
+        'DNS label exceeds 63 UTF-8 bytes',
+      );
     }
+    encodedNameLength += 1 + bytes.length;
+  }
+  if (encodedNameLength > 255) {
+    throw ArgumentError.value(
+      name,
+      'name',
+      'DNS name exceeds 255 encoded bytes',
+    );
+  }
+
+  for (final entry in labels) {
+    final bytes = entry.value;
+    writer.writeUint8(bytes.length);
+    writer.writeBytes(bytes);
   }
   writer.writeUint8(0); // End of name
 }
@@ -865,11 +883,23 @@ String? _readDomainName(ByteDataReader reader) {
       if (reader.remainingLength < length) return null;
 
       final labelBytes = reader.readBytes(length);
-      labels.add(String.fromCharCodes(labelBytes));
+      labels.add(utf8.decode(labelBytes, allowMalformed: true));
     }
   }
 
   return null;
+}
+
+Uint8List _encodeTxtString(String value) {
+  final bytes = Uint8List.fromList(utf8.encode(value));
+  if (bytes.length > 255) {
+    throw ArgumentError.value(
+      value,
+      'value',
+      'DNS TXT character-string exceeds 255 UTF-8 bytes',
+    );
+  }
+  return bytes;
 }
 
 // Utility classes for reading/writing binary data
@@ -931,7 +961,8 @@ class ByteDataReader {
 
   int readUint32() {
     if (_offset + 3 >= _data.length) throw RangeError('Buffer underflow');
-    final value = (_data[_offset] << 24) |
+    final value =
+        (_data[_offset] << 24) |
         (_data[_offset + 1] << 16) |
         (_data[_offset + 2] << 8) |
         _data[_offset + 3];

@@ -4,6 +4,7 @@
 /// for serving mDNS records dynamically.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dns.dart';
 
@@ -71,6 +72,11 @@ class MDNSService implements Zone {
     // Validate inputs
     if (instance.isEmpty) {
       throw ArgumentError('Service instance name cannot be empty');
+    }
+    if (utf8.encode(instance).length > 63) {
+      throw ArgumentError(
+        'Service instance name exceeds 63 UTF-8 bytes: $instance',
+      );
     }
     if (service.isEmpty) {
       throw ArgumentError('Service name cannot be empty');
@@ -142,8 +148,9 @@ class MDNSService implements Zone {
   @override
   List<DNSResourceRecord> records(DNSQuestion question) {
     // Normalize query name to FQDN format (with trailing dot)
-    final queryName =
-        question.name.endsWith('.') ? question.name : '${question.name}.';
+    final queryName = question.name.endsWith('.')
+        ? question.name
+        : '${question.name}.';
 
     switch (queryName) {
       case String name when name == enumAddr:
@@ -401,7 +408,7 @@ bool _isValidFQDN(String s) {
 
   for (final label in labels) {
     if (label.isEmpty) return false;
-    if (label.length > 63) return false;
+    if (utf8.encode(label).length > 63) return false;
     if (!RegExp(r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$').hasMatch(label)) {
       return false;
     }
