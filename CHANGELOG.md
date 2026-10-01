@@ -1,3 +1,13 @@
+## 2.1.7
+
+ - **REFACTOR**(mdns_dart): 迁移 Felorx mDNS 示例服务名.
+ - **FIX**(mdns_dart): 支持 UTF-8 DNS 标签与 TXT 编解码.
+ - **FIX**(mdns_dart): 修复多网卡组播与套接字异常.
+ - **FIX**(mdns_dart): 修复无效单播目标触发 UDP 异常.
+ - **FIX**(mdns_dart): 修复关闭查询后 UDP 读事件循环.
+ - **FIX**(mdns_dart): 修复 mDNS 查询关闭后的流异常.
+ - **DOCS**(mdns_dart): 补齐文档目录分层.
+
 ## 2.1.6
 
  - **FIX**(mdns_dart): 支持 UTF-8 DNS 标签与 TXT 编解码.
