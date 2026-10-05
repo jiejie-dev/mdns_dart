@@ -5,6 +5,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 /// DNS record types used in mDNS operations
@@ -437,37 +438,19 @@ class AAAARecord extends DNSResourceRecord {
     writer.writeUint32(ttl);
     writer.writeUint16(16); // RDLENGTH
 
-    // Parse IPv6 address and write 16 bytes
-    final parts = address.split(':');
-    final bytes = <int>[];
-
-    // Handle IPv6 address parsing (simplified)
-    for (int i = 0; i < 8; i++) {
-      final part = i < parts.length ? parts[i] : '0';
-      final value = int.parse(part.isEmpty ? '0' : part, radix: 16);
-      bytes.add((value >> 8) & 0xFF);
-      bytes.add(value & 0xFF);
-    }
-
-    for (final byte in bytes) {
+    for (final byte in rdata) {
       writer.writeUint8(byte);
     }
   }
 
   @override
   Uint8List get rdata {
-    // Simplified IPv6 encoding
-    final parts = address.split(':');
-    final bytes = <int>[];
-
-    for (int i = 0; i < 8; i++) {
-      final part = i < parts.length ? parts[i] : '0';
-      final value = int.parse(part.isEmpty ? '0' : part, radix: 16);
-      bytes.add((value >> 8) & 0xFF);
-      bytes.add(value & 0xFF);
+    // A scope identifier belongs to the local interface, not DNS wire data.
+    final parsed = InternetAddress.tryParse(address.split('%').first);
+    if (parsed == null || parsed.type != InternetAddressType.IPv6) {
+      throw FormatException('Invalid IPv6 address', address);
     }
-
-    return Uint8List.fromList(bytes);
+    return parsed.rawAddress;
   }
 
   static AAAARecord? parseRData(

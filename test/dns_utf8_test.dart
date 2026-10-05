@@ -5,6 +5,19 @@ import 'package:mdns_dart/src/zone.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('AAAA 支持接口标识、压缩和 IPv4 映射 IPv6 地址', () {
+    for (final address in ['fe80::1234:6e6d%18', '::1', '::ffff:192.168.1.1']) {
+      final record = AAAARecord(name: 'node.local', address: address);
+      final expected = InternetAddress(address.split('%').first).rawAddress;
+      expect(record.rdata, expected);
+      final parsed = DNSMessage.parse(
+        DNSMessage.response(id: 1, answers: [record]).pack(),
+      );
+      final decoded = parsed!.answers.single as AAAARecord;
+      expect(InternetAddress(decoded.address).rawAddress, expected);
+    }
+  });
+
   group('UTF-8 DNS 编解码', () {
     test('服务实例标签与 TXT 字段支持中文、日文和 Emoji 往返', () {
       final message = DNSMessage.response(
