@@ -1,3 +1,7 @@
+## 2.1.8
+
+ - **FIX**(mdns_dart): 修复带接口标识的 IPv6 地址编码.
+
 ## 2.1.7
 
  - **REFACTOR**(mdns_dart): 迁移 Felorx mDNS 示例服务名.
